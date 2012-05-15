@@ -8,13 +8,24 @@ class Proxy < Sinatra::Base
     host = params[:splat][0]
     path = "/" + params[:splat][1]
     path += "?#{request.query_string}" if request.query_string && !request.query_string.empty?
-    puts "HTTP Call #{host} #{path}"
     target = File.join(File.dirname(__FILE__), "storage", "200", host, path)
     if File.exists? target
       content_type 'application/octet-stream'
       response.write File.read(target)
       return 200
     end
+    target_redirect = File.join(File.dirname(__FILE__), "storage", "redirect", host, path)
+    f = File.join(target_redirect, "301")
+    if File.exists? f
+      response["Location"] = File.read f
+      return 301
+    end
+    f = File.join(target_redirect, "302")
+    if File.exists? f
+      response["Location"] = File.read f
+      return 302
+    end
+    puts "HTTP Call #{host} #{path}"
     result = Net::HTTP.get_response(host, path)
     if result.code == "200"
       FileUtils.mkdir_p File.dirname(target)
@@ -28,9 +39,8 @@ class Proxy < Sinatra::Base
       File.open(target_404, "wb") {|io| io.write ""}
       return 404
     elsif result.code == "301" || result.code == "302"
-      target_redirect = File.join(File.dirname(__FILE__), "storage", "redirect", host, path, result.code)
-      FileUtils.mkdir_p File.dirname(target_redirect)
-      File.open(target_redirect, "wb") {|io| io.write response["Location"]}
+      FileUtils.mkdir_p target_redirect
+      File.open(File.join(target_redirect, result.code), "wb") {|io| io.write result["Location"]}
       response["Location"] = result["Location"]
       return result.code.to_i
     else
