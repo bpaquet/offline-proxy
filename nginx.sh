@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/sh
 
 NGINX_HOME=$HOME/tmp/nginx
 PID_FILE=$NGINX_HOME/logs/nginx.pid
