@@ -53,10 +53,7 @@ function proxy(response, directory, host, path) {
           response.end();
           stream.end();
         }).on('close', function() {
-          log(1, "Close for proxy request http://" + host + path);
-          response.statusCode = 500;
-          response.end();  
-          stream.end();
+          //HTTP Client never emit this event
         });
         return;
       }
@@ -155,16 +152,18 @@ http.createServer(function (request, response) {
         return;
       }
     }
-    log(2, "Return file on disk " + filename);
-    fs.readFile(filename, function(err, data) {
-      if (err) {
-        log(1, "Unable to read file " + filename);
-        response.statusCode = 500;
-        response.end();
-        return;
-      }
-      response.statusCode = 200;
-      response.end(data);
+    var stream = fs.createReadStream(filename, { flags: 'r', bufferSize: 64 * 1024});
+    stream.on('data', function(data) {
+      response.write(data);
+    }).on('end', function() {
+      log(2, "Returned file on disk " + filename);
+      response.end();
+    }).on('error', function(err) {
+      log(1, "Unable to read file " + filename + " : " + err);
+      response.statusCode = 500;
+      response.end();
+    }).on('close', function() {
+      // Nothing to do
     });
   });
 }).listen(port);
