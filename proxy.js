@@ -118,7 +118,18 @@ function send_redirect(response, code, filename) {
 }
 
 http.createServer(function (request, response) {
+  if (request.method != 'GET') {
+    response.statusCode = 405;
+    response.end();
+    return;
+  }
   var result = request.url.match(/^http:\/\/([^\/]+)(\/.*)$/);
+  if (! result) {
+    log(0, "Unable to parse url " + request.url);
+    response.statusCode = 500;
+    response.end();
+    return; 
+  }
   var path = result[2];
   var host = result[1];
   log(2, "Incoming request http://" + host + path);
