@@ -51,9 +51,9 @@ function proxy(response, directory, host, path) {
     }, function(result) {
       if (result.statusCode == 200) {
         log(3, "Proxy request code 200 http://" + host + path);
-        var stream = fs.createWriteStream(directory + "/200", {flags : 'w'});
+        var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
         stream.on('error', function(e) {
-          log(0, "Unable to write file " + directory + "/200 : " + e); 
+          log(0, "Unable to write file " + directory + "/200.temp : " + e); 
         });
         result.on('data', function(chunk) {
           log(4, "Data received for proxy request http://" + host + path);
@@ -63,7 +63,14 @@ function proxy(response, directory, host, path) {
           log(1, "End of proxy request ok http://" + host + path);
           response.end();
           stream.end();
-          log_operation();
+          fs.rename(directory + "/200.temp", directory + "/200", function(err) {
+            if (err) {
+              log(0, "Unable to rename file to " + directory + "/200");
+            }
+            else {
+              log_operation();
+            }
+          });
         }).on('close', function() {
           //HTTP Client never emit this event
         });
