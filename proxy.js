@@ -1,4 +1,4 @@
-var 
+var
   http = require('http'),
   fs = require('fs'),
   mkdirp = require('mkdirp'),
@@ -116,7 +116,7 @@ function proxy(response, directory, host, path) {
       }
       log(1, "Wrong return code " + result.statusCode + " for proxy request http://" + host + path);
       response.statusCode = 500;
-      response.end(result.statusCode);
+      response.end();
     }).on('error', function(e) {
       log(1, "Error while proxy request http://" + host + path + " : " + e);
       response.statusCode = 500;
