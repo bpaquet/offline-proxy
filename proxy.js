@@ -203,7 +203,11 @@ http.createServer(function (request, response) {
       // Nothing to do
     });
   });
-}).listen(nconf.get('port'));
+}).listen(nconf.get('port')).on('clientError', function(e) {
+  console.log(e);
+}).on('error', function(err) {
+  log(0, "HTTP ERROR : " + err);
+});
 
 log(1, "Offline Proxy ready on port " + nconf.get('port'));
 
