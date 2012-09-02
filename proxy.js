@@ -50,7 +50,6 @@ function proxy(response, directory, parsed_url, body, headers) {
       parsed_url.headers['Accept'] = headers['accept'];
       parsed_url.headers['Content-length'] = body.length;
     }
-    console.log(parsed_url, body);
     http.request(parsed_url, function(result) {
       if (result.statusCode == 200) {
         log.info("Proxy request code 200 " + parsed_url.href);
