@@ -3,24 +3,22 @@ var
   fs = require('fs'),
   mkdirp = require('mkdirp'),
   util = require('util'),
-  nconf = require('nconf'),
-  url = require('url');
+  log = require('log4node'),
+  url = require('url'),
+  crypto = require('crypto');
 
-nconf.argv().defaults({
-  'port': 3128,
-  'log_level': 2,
-});
+var argv = require('optimist').argv;
 
-function log(level, s) {
-  if (level <= nconf.get('log_level')) {
-    util.log(s);
-  }
+var port = argv.port || 3128;
+
+log.setLogLevel('notice');
+
+if (argv.log_level) {
+  log.setLogLevel(argv.log_level);
 }
 
 function log_operation() {
-  if (2 == nconf.get('log_level')) {
-    process.stdout.write('.');
-  }
+  process.stdout.write('.');
 }
 
 function file_exist(filename, not_exist, exist) {
@@ -34,35 +32,43 @@ function file_exist(filename, not_exist, exist) {
   });
 }
 
-function proxy(response, directory, parsed_url) {
-  log(5, "Create directory " + directory);
+function proxy(response, directory, parsed_url, body, headers) {
+  log.debug("Create directory " + directory);
   mkdirp(directory, function(err) {
     if (err) {
-      log(0, "Unable to create directory " + directory + " : " + err);
+      log.error("Unable to create directory " + directory + " : " + err);
       response.statusCode = 500;
       response.end();
       return;
     }
-    log(5, "Directory created " + directory);
-    log(3, "Start proxy request " + parsed_url.href);
-    http.get(parsed_url, function(result) {
+    log.debug("Directory created " + directory);
+    log.info("Start proxy request " + parsed_url.href);
+    if (body) {
+      parsed_url.method = 'POST';
+      parsed_url.headers = {};
+      parsed_url.headers['Content-Type'] = headers['content-type'];
+      parsed_url.headers['Accept'] = headers['accept'];
+      parsed_url.headers['Content-length'] = body.length;
+    }
+    console.log(parsed_url, body);
+    http.request(parsed_url, function(result) {
       if (result.statusCode == 200) {
-        log(3, "Proxy request code 200 " + parsed_url.href);
+        log.info("Proxy request code 200 " + parsed_url.href);
         var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
         stream.on('error', function(e) {
-          log(0, "Unable to write file " + directory + "/200.temp : " + e); 
+          log.error("Unable to write file " + directory + "/200.temp : " + e);
         });
         result.on('data', function(chunk) {
-          log(4, "Data received for proxy request " + parsed_url.href);
+          log.debug("Data received for proxy request " + parsed_url.href);
           response.write(chunk);
           stream.write(chunk);
         }).on('end', function() {
-          log(1, "End of proxy request ok " + parsed_url.href);
+          log.notice("End of proxy request ok " + parsed_url.href);
           response.end();
           stream.end();
           fs.rename(directory + "/200.temp", directory + "/200", function(err) {
             if (err) {
-              log(0, "Unable to rename file to " + directory + "/200");
+              log.error("Unable to rename file to " + directory + "/200");
             }
             else {
               log_operation();
@@ -75,12 +81,12 @@ function proxy(response, directory, parsed_url) {
       }
       if (result.statusCode == 404) {
         response.statusCode = 404;
-        log(3, "Proxy request 404 " + parsed_url.href);
+        log.info("Proxy request 404 " + parsed_url.href);
         response.end();
         log_operation();
         fs.writeFile(directory + "/404", "", function(err) {
           if (err) {
-            log(0, "Unable to write file " + directory + "/200 : " + err);
+            log.error("Unable to write file " + directory + "/200 : " + err);
           }
         });
         return;
@@ -88,12 +94,12 @@ function proxy(response, directory, parsed_url) {
       if (result.statusCode == 302) {
         response.statusCode = 302;
         response.setHeader("Location", result.headers.location);
-        log(3, "Proxy request 302 " + parsed_url.href);
+        log.info("Proxy request 302 " + parsed_url.href);
         response.end();
         log_operation();
         fs.writeFile(directory + "/302", result.headers.location, function(err) {
           if (err) {
-            log(0, "Unable to write file " + directory + "/302 : " + err);
+            log.error("Unable to write file " + directory + "/302 : " + err);
           }
         });
         return;
@@ -101,31 +107,31 @@ function proxy(response, directory, parsed_url) {
       if (result.statusCode == 301) {
         response.statusCode = 301;
         response.setHeader("Location", result.headers.location);
-        log(3, "Proxy request 301 " + parsed_url.href);
+        log.info("Proxy request 301 " + parsed_url.href);
         response.end();
         log_operation();
         fs.writeFile(directory + "/301", result.headers.location, function(err) {
           if (err) {
-            log(0, "Unable to write file " + directory + "/301 : " + err);
+            log.error("Unable to write file " + directory + "/301 : " + err);
           }
         });
         return;
       }
-      log(1, "Wrong return code " + result.statusCode + " for proxy request  " + parsed_url.href);
+      log.notice("Wrong return code " + result.statusCode + " for proxy request  " + parsed_url.href);
       response.statusCode = 500;
       response.end();
     }).on('error', function(e) {
-      log(1, "Error while proxy request " + parsed_url.href + " : " + e);
+      log.error("Error while proxy request " + parsed_url.href + " : " + e);
       response.statusCode = 500;
       response.end();
-    });
+    }).end(body);
   });
 }
 
 function send_redirect(response, code, filename) {
   fs.readFile(filename, function(err, data) {
     if (err) {
-      log(1, "Unable to read file " + filename);
+      log.error("Unable to read file " + filename);
       response.statusCode = 500;
       response.end();
       return;
@@ -137,26 +143,12 @@ function send_redirect(response, code, filename) {
   });
 }
 
-http.createServer(function (request, response) {
-  if (request.method != 'GET') {
-    response.statusCode = 405;
-    response.end();
-    return;
-  }
-  var parsed_url = url.parse(request.url);
-  if (! parsed_url) {
-    log(0, "Unable to parse url " + request.url);
-    response.statusCode = 500;
-    response.end();
-    return;
-  }
-  log(3, "Incoming request " + parsed_url.href);
-  var directory = "storage/" + parsed_url.host + parsed_url.path;
-  file_exist(directory + "200", function(filename) {
-    file_exist(directory + "404", function(filename) {
-      file_exist(directory + "302", function(filename) {
-        file_exist(directory + "301", function(filename) {
-          proxy(response, directory, parsed_url);
+function process_req(request, response, parsed_url, directory, body) {
+  file_exist(directory + "/200", function(filename) {
+    file_exist(directory + "/404", function(filename) {
+      file_exist(directory + "/302", function(filename) {
+        file_exist(directory + "/301", function(filename) {
+          proxy(response, directory, parsed_url, body, request.headers);
         },
         function(filename, stats) {
           send_redirect(response, 301, filename);
@@ -167,7 +159,7 @@ http.createServer(function (request, response) {
       });
     },
     function(filename, stats) {
-      log(3, "Return 404 for request " + parsed_url.href);
+      log.info("Return 404 for request " + parsed_url.href);
       response.statusCode = 404;
       response.end();
       log_operation();
@@ -176,7 +168,7 @@ http.createServer(function (request, response) {
     if (request.headers['if-modified-since']) {
       date = Date.parse(request.headers['if-modified-since']);
       if (date >= stats.mtime) {
-        log(3, "Return 304 for request " + parsed_url.href);
+        log.info("Return 304 for request " + parsed_url.href);
         response.statusCode = 304;
         response.end();
         log_operation();
@@ -187,10 +179,10 @@ http.createServer(function (request, response) {
     stream.on('data', function(data) {
       response.write(data);
     }).on('end', function() {
-      log(3, "Returned file on disk " + filename);
+      log.info("Returned file on disk " + filename);
       response.end();
     }).on('error', function(err) {
-      log(0, "Unable to read file " + filename + " : " + err);
+      log.error("Unable to read file " + filename + " : " + err);
       response.statusCode = 500;
       response.end();
     }).on('close', function() {
@@ -198,11 +190,44 @@ http.createServer(function (request, response) {
       // Nothing to do
     });
   });
-}).listen(nconf.get('port')).on('clientError', function(e) {
+}
+
+http.createServer(function (request, response) {
+  if (request.method != 'GET' && request.method != 'POST') {
+    response.statusCode = 405;
+    response.end();
+    return;
+  }
+  var parsed_url = url.parse(request.url);
+  if (! parsed_url) {
+    log.error("Unable to parse url " + request.url);
+    response.statusCode = 500;
+    response.end();
+    return;
+  }
+  log.debug("Incoming request " + parsed_url.href);
+  var directory = "storage/" + parsed_url.host + parsed_url.path;
+  if (request.method == 'GET') {
+    process_req(request, response, parsed_url, directory);
+  }
+  else {
+    var shasum = crypto.createHash('sha1');
+    var body = "";
+    request.on('data', function(chunk) {
+      shasum.update(chunk);
+      body += chunk;
+    })
+    request.on('end', function() {
+      var hash = shasum.digest('hex');
+      directory += '/' + hash;
+      process_req(request, response, parsed_url, directory, body);
+    })
+  }
+}).listen(port).on('clientError', function(e) {
   console.log(e);
 }).on('error', function(err) {
-  log(0, "HTTP ERROR : " + err);
+  log.error("HTTP ERROR : " + err);
 });
 
-log(1, "Offline Proxy ready on port " + nconf.get('port'));
+log.notice("Offline Proxy ready on port " + port);
 
