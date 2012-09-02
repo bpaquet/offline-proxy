@@ -32,7 +32,7 @@ function file_exist(filename, not_exist, exist) {
   });
 }
 
-function proxy(response, directory, parsed_url, body, headers) {
+function proxy(response, directory, parsed_url, body_chunks, headers) {
   log.debug("Create directory " + directory);
   mkdirp(directory, function(err) {
     if (err) {
@@ -43,14 +43,21 @@ function proxy(response, directory, parsed_url, body, headers) {
     }
     log.debug("Directory created " + directory);
     log.info("Start proxy request " + parsed_url.href);
-    if (body) {
+    if (body_chunks) {
       parsed_url.method = 'POST';
       parsed_url.headers = {};
       parsed_url.headers['Content-Type'] = headers['content-type'];
       parsed_url.headers['Accept'] = headers['accept'];
-      parsed_url.headers['Content-length'] = body.length;
+      parsed_url.headers['User-Agent'] = headers['user-agent'];
+      if (headers['content-encoding']) {
+        parsed_url.headers['Content-Encoding'] = headers['content-encoding'];
+      }
+      if (headers['accept-encoding']) {
+        parsed_url.headers['Accept-Encoding'] = headers['accept-encoding'];
+      }
+      parsed_url.headers['Content-length'] = headers['content-length'];
     }
-    http.request(parsed_url, function(result) {
+    var proxy_req = http.request(parsed_url, function(result) {
       if (result.statusCode == 200) {
         log.info("Proxy request code 200 " + parsed_url.href);
         var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
@@ -123,7 +130,13 @@ function proxy(response, directory, parsed_url, body, headers) {
       log.error("Error while proxy request " + parsed_url.href + " : " + e);
       response.statusCode = 500;
       response.end();
-    }).end(body);
+    });
+    if (body_chunks) {
+      body_chunks.forEach(function(chunk) {
+        proxy_req.write(chunk);
+      })
+    }
+    proxy_req.end();
   });
 }
 
@@ -142,12 +155,12 @@ function send_redirect(response, code, filename) {
   });
 }
 
-function process_req(request, response, parsed_url, directory, body) {
+function process_req(request, response, parsed_url, directory, body_chunks) {
   file_exist(directory + "/200", function(filename) {
     file_exist(directory + "/404", function(filename) {
       file_exist(directory + "/302", function(filename) {
         file_exist(directory + "/301", function(filename) {
-          proxy(response, directory, parsed_url, body, request.headers);
+          proxy(response, directory, parsed_url, body_chunks, request.headers);
         },
         function(filename, stats) {
           send_redirect(response, 301, filename);
@@ -211,15 +224,15 @@ http.createServer(function (request, response) {
   }
   else {
     var shasum = crypto.createHash('sha1');
-    var body = "";
+    var body_chunks = [];
     request.on('data', function(chunk) {
       shasum.update(chunk);
-      body += chunk;
+      body_chunks.push(chunk);
     })
     request.on('end', function() {
       var hash = shasum.digest('hex');
       directory += '/' + hash;
-      process_req(request, response, parsed_url, directory, body);
+      process_req(request, response, parsed_url, directory, body_chunks);
     })
   }
 }).listen(port).on('clientError', function(e) {
