@@ -5,6 +5,7 @@ var
   util = require('util'),
   log = require('log4node'),
   url = require('url'),
+  net = require('net'),
   crypto = require('crypto');
 
 var argv = require('optimist').argv;
@@ -239,6 +240,20 @@ http.createServer(function (request, response) {
   console.log(e);
 }).on('error', function(err) {
   log.error("HTTP ERROR : " + err);
+}).on('connect', function(request, socket, head) {
+  var splitted = request.url.split(':');
+  log.notice('Create connection to', splitted[0], splitted[1]);
+  var connection = net.createConnection(splitted[1], splitted[0], function() {
+    socket.write('HTTP/1.0 200 Connection established\r\n\r\n');
+    socket.pipe(connection);
+    connection.pipe(socket);
+    socket.on('end', function() {
+      log.notice('Disonnected from', splitted[0], splitted[1]);
+    });
+  });
+  connection.on('error', function(err) {
+    log.notice('Connect error', err);
+  })
 });
 
 log.notice("Offline Proxy ready on port " + port);
