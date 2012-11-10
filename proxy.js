@@ -7,7 +7,10 @@ var
   url = require('url'),
   net = require('net'),
   zlib = require('zlib'),
-  crypto = require('crypto');
+  crypto = require('crypto'),
+  sprintf = require('sprintf').sprintf;
+
+http.globalAgent.maxSockets = 100;
 
 var argv = require('optimist').argv;
 
@@ -19,8 +22,27 @@ if (argv.log_level) {
   log.setLogLevel(argv.log_level);
 }
 
-function log_operation() {
-  process.stdout.write('.');
+function formatSize(n) {
+  if (!n) {
+    return 'undefined';
+  }
+  if (n < 1000) {
+    return n;
+  }
+  n = n / 1000;
+  if (n < 1000) {
+    return sprintf('%0.3f k', n);
+  }
+  n = n / 1000;
+  if (n < 1000) {
+    return sprintf('%0.3f M', n);
+  }
+  n = n / 1000;
+  return sprintf('%0.3f G', n);
+}
+
+function log_operation(c) {
+  process.stdout.write(c || '.');
 }
 
 function file_exist(filename, exist, not_exist) {
@@ -53,7 +75,7 @@ var proxy_map = {
       call_process_req();
     });
   },
-  302: function(result, directory, response, call_process_req) {
+  301: function(result, directory, response, call_process_req) {
     fs.writeFile(directory + "/301", result.headers.location, function(err) {
       if (err) {
         return log.error("Unable to write file " + directory + "/301 : " + err);
@@ -70,22 +92,33 @@ var proxy_map = {
     });
   },
   200: function(result, directory, response, call_process_req) {
-    log.info("Proxy request code 200 " + directory);
-    fs.writeFile(directory + "/200.headers", JSON.stringify(result.headers), function(err) {
+    var length = result.headers['content-length'];
+    log.notice("Start receiving data for " + directory + ", Content-Length " + formatSize(length));
+    zlib.gzip(JSON.stringify(result.headers), function(err, data) {
       if (err) {
-        return log.error("Unable to write headers file " + directory + "/200.headers: " + err);
+        return log.error("Unable to zip headers file " + directory + "/200.headers: " + err);
       }
+      fs.writeFile(directory + "/200.headers", data, function(err) {
+        if (err) {
+          return log.error("Unable to write headers file " + directory + "/200.headers: " + err);
+        }
+      });
     });
     copyHeadersIfExists(headers_to_copy_from_disk, result.headers, function(k, v) {response.setHeader(k, v)});
     var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
     var gzip = zlib.createGzip();
+    var counter = 0;
     stream.on('error', function(err) {
       log.error("Unable to write file " + directory + "/200.temp: " + err);
+    });
+    result.on('data', function(chunk) {
+      counter += chunk.length;
+      log.info('Received ' + directory + ': ' + formatSize(counter) + '/' + formatSize(length));
     });
     result.pipe(response);
     result.pipe(gzip).pipe(stream);
     result.on('end', function() {
-      log.notice("End of proxy request ok " + directory);
+      log.notice("End of proxy request ok " + directory + ", size " + formatSize(counter));
       setTimeout(function() {
         fs.rename(directory + "/200.temp", directory + "/200", function(err) {
           if (err) {
@@ -143,7 +176,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
       f(result, directory, response, function() {
         process_req(response, headers, parsed_url, directory, body_chunks, function() {
           log.error('Internal error, no file found after proxy request for', directory);
-        })
+        });
       });
     });
     proxy_req.on('error', function(e) {
@@ -188,6 +221,7 @@ function streamFile(filename, response) {
     // Nothing to do
   });
 }
+
 var process_map = {
   301: function(response, headers, filename, stats) {
     send_redirect(response, 301, filename);
@@ -210,20 +244,28 @@ var process_map = {
           response.end();
           return;
         }
-        orig_headers = JSON.parse(data.toString());
-        if (headers['if-modified-since'] && orig_headers['last-modified']) {
-          if_modified = Date.parse(headers['if-modified-since']);
-          last_modified = Date.parse(orig_headers['last-modified']);
-          if (if_modified >= last_modified) {
-            log.info("Return 304 for request " + filename);
-            response.statusCode = 304;
+        zlib.gunzip(data, function(err, data) {
+          if (err) {
+            log.error('Unable to gunzip ' + filename + '.headers file:' + err);
+            response.statusCode = 500;
             response.end();
-            log_operation();
             return;
           }
-        }
-        copyHeadersIfExists(headers_to_copy_from_disk, orig_headers, function(k, v) {response.setHeader(k, v)});
-        streamFile(filename, response);
+          orig_headers = JSON.parse(data.toString());
+          if (headers['if-modified-since'] && orig_headers['last-modified']) {
+            if_modified = Date.parse(headers['if-modified-since']);
+            last_modified = Date.parse(orig_headers['last-modified']);
+            if (if_modified >= last_modified) {
+              log.debug("Return 304 for request " + filename);
+              response.statusCode = 304;
+              response.end();
+              log_operation(':');
+              return;
+            }
+          }
+          copyHeadersIfExists(headers_to_copy_from_disk, orig_headers, function(k, v) {response.setHeader(k, v)});
+          streamFile(filename, response);
+        });
       });
     }, function() {
       response.setHeader('Content-Length', stats.size);

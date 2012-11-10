@@ -1,1 +1,1 @@
-node_modules/.bin/supervisor proxy.js
+node_modules/.bin/supervisor -- proxy.js $*
