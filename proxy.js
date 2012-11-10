@@ -6,6 +6,7 @@ var
   log = require('log4node'),
   url = require('url'),
   net = require('net'),
+  zlib = require('zlib'),
   crypto = require('crypto');
 
 var argv = require('optimist').argv;
@@ -77,11 +78,12 @@ var proxy_map = {
     });
     copyHeadersIfExists(headers_to_copy_from_disk, result.headers, function(k, v) {response.setHeader(k, v)});
     var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
+    var gzip = zlib.createGzip();
     stream.on('error', function(err) {
       log.error("Unable to write file " + directory + "/200.temp: " + err);
     });
     result.pipe(response);
-    result.pipe(stream);
+    result.pipe(gzip).pipe(stream);
     result.on('end', function() {
       log.notice("End of proxy request ok " + directory);
       setTimeout(function() {
@@ -175,7 +177,8 @@ function send_redirect(response, code, filename) {
 
 function streamFile(filename, response) {
   var stream = fs.createReadStream(filename, { flags: 'r', bufferSize: 64 * 1024});
-  stream.pipe(response);
+  var gunzip = zlib.createGunzip();
+  stream.pipe(gunzip).pipe(response);
   stream.on('error', function(err) {
     log.error("Unable to read file " + filename + " : " + err);
     response.statusCode = 500;
