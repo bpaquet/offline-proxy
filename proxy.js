@@ -22,6 +22,11 @@ if (argv.log_level) {
   log.setLogLevel(argv.log_level);
 }
 
+var http_proxy = undefined;
+if (argv.http_proxy) {
+  http_proxy = url.parse(argv.http_proxy);
+}
+
 function formatSize(n) {
   if (!n) {
     return 'undefined';
@@ -153,6 +158,17 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
     }
     log.debug("Directory created " + directory);
     log.info("Start proxy request " + directory);
+    if (http_proxy) {
+      var full_path = parsed_url.protocol + '//' + parsed_url.hostname;
+      if (parsed_url.port) {
+        full_path += ':' + parsed_url.port;
+      }
+      full_path += parsed_url.path;
+      parsed_url.path = full_path;
+      parsed_url.protocol = http_proxy.protocol;
+      parsed_url.hostname = http_proxy.hostname;
+      parsed_url.port = http_proxy.port;
+    }
     if (body_chunks) {
       parsed_url.method = 'POST';
       parsed_url.headers = {};
