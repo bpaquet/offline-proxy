@@ -18,8 +18,11 @@ var port = argv.port || 3128;
 
 log.setLogLevel('notice');
 
-if (argv.log_level) {
-  log.setLogLevel(argv.log_level);
+if (argv.log_file) {
+  log.reconfigure({file: argv.log_file, level: argv.log_level});
+}
+else if (argv.log_level) {
+  log.reconfigure({level: argv.log_level});
 }
 
 var http_proxy = undefined;

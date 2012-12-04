@@ -9,7 +9,7 @@
   "dependencies": {
     "optimist": "0.3.4",
     "mkdirp": "0.3.4",
-    "log4node": "0.1.0",
+    "log4node": "0.1.1",
     "sprintf": "0.1.0"
   }
 }
