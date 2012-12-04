@@ -314,10 +314,10 @@ function run_proxy_request(ctx) {
         full_path += ':' + ctx.parsed_url.port;
       }
       full_path += ctx.parsed_url.path;
-      parsed_url.path = full_path;
-      parsed_url.protocol = http_proxy.protocol;
-      parsed_url.hostname = http_proxy.hostname;
-      parsed_url.port = http_proxy.port;
+      ctx.parsed_url.path = full_path;
+      ctx.parsed_url.protocol = http_proxy.protocol;
+      ctx.parsed_url.hostname = http_proxy.hostname;
+      ctx.parsed_url.port = http_proxy.port;
     }
     if (ctx.body_chunks) {
       ctx.parsed_url.method = 'POST';
