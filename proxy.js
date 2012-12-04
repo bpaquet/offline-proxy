@@ -6,8 +6,8 @@ var
   log = require('log4node'),
   url = require('url'),
   net = require('net'),
-  zlib = require('zlib'),
   crypto = require('crypto'),
+  events = require('events'),
   sprintf = require('sprintf').sprintf;
 
 http.globalAgent.maxSockets = 100;
@@ -72,63 +72,74 @@ var headers_to_copy_from_disk = [
 ];
 
 var proxy_map = {
-  302: function(result, directory, response, call_process_req) {
-    fs.writeFile(directory + "/302", result.headers.location, function(err) {
+  302: function(result, ctx) {
+    fs.writeFile(ctx.directory + "/302", result.headers.location, function(err) {
       if (err) {
-        return log.error("Unable to write file " + directory + "/302 : " + err);
+        log.error("Unable to write file " + ctx.directory + "/302 : " + err);
+        ctx.events.emit('error');
+        return;
       }
-      call_process_req();
+      ctx.events.emit('no_body');
     });
   },
-  301: function(result, directory, response, call_process_req) {
-    fs.writeFile(directory + "/301", result.headers.location, function(err) {
+  301: function(result, ctx) {
+    fs.writeFile(ctx.directory + "/301", result.headers.location, function(err) {
       if (err) {
-        return log.error("Unable to write file " + directory + "/301 : " + err);
+        log.error("Unable to write file " + ctx.directory + "/301 : " + err);
+        ctx.events.emit('error');
+        return;
       }
-      call_process_req();
+      ctx.events.emit('no_body');
     });
   },
-  404: function(result, directory, response, call_process_req) {
-    fs.writeFile(directory + "/404", "", function(err) {
+  404: function(result, ctx) {
+    fs.writeFile(ctx.directory + "/404", "", function(err) {
       if (err) {
-        return log.error("Unable to write file " + directory + "/404 : " + err);
+        log.error("Unable to write file " + ctx.directory + "/404 : " + err);
+        ctx.events.emit('error');
+        return;
       }
-      call_process_req();
+      ctx.events.emit('no_body');
     });
   },
-  200: function(result, directory, response, call_process_req) {
+  200: function(result, ctx) {
     var length = result.headers['content-length'];
-    log.notice("Start receiving data for " + directory + ", Content-Length " + formatSize(length));
-    zlib.gzip(JSON.stringify(result.headers), function(err, data) {
+    log.notice("Start receiving data for " + ctx.directory + ", Content-Length " + formatSize(length));
+    fs.writeFile(ctx.directory + "/200.headers", JSON.stringify(result.headers), function(err) {
       if (err) {
-        return log.error("Unable to zip headers file " + directory + "/200.headers: " + err);
+        log.error("Unable to write headers file " + ctx.directory + "/200.headers: " + err);
+        ctx.events.emit('error');
+        return;
       }
-      fs.writeFile(directory + "/200.headers", data, function(err) {
-        if (err) {
-          return log.error("Unable to write headers file " + directory + "/200.headers: " + err);
-        }
-      });
     });
-    copyHeadersIfExists(headers_to_copy_from_disk, result.headers, function(k, v) {response.setHeader(k, v)});
-    var stream = fs.createWriteStream(directory + "/200.temp", {flags : 'w'});
-    var gzip = zlib.createGzip();
-    var counter = 0;
+    var stream = fs.createWriteStream(ctx.directory + "/200.temp", {flags : 'w'});
+    ctx.counter = 0;
     stream.on('error', function(err) {
-      log.error("Unable to write file " + directory + "/200.temp: " + err);
+      log.error("Unable to write file " + ctx.directory + "/200.temp: " + err);
+    });
+    stream.on('open', function() {
+      ctx.status = 'streaming';
+      ctx.result_headers = result.headers;
+      ctx.filename = ctx.directory + "/200.temp";
+      ctx.events.emit('streaming', result.headers);
     });
     result.on('data', function(chunk) {
-      counter += chunk.length;
-      log.info('Received ' + directory + ': ' + formatSize(counter) + '/' + formatSize(length));
+      ctx.counter += chunk.length;
+      log.info('Received ' + ctx.directory + ': ' + formatSize(ctx.counter) + '/' + formatSize(length));
+      stream.write(chunk);
+      ctx.events.emit('data');
     });
-    result.pipe(response);
-    result.pipe(gzip).pipe(stream);
     result.on('end', function() {
-      log.notice("End of proxy request ok " + directory + ", size " + formatSize(counter));
+      stream.end();
+      log.notice("End of proxy request ok " + ctx.directory + ", size " + formatSize(ctx.counter));
       setTimeout(function() {
-        fs.rename(directory + "/200.temp", directory + "/200", function(err) {
+        fs.rename(ctx.directory + "/200.temp", ctx.directory + "/200", function(err) {
           if (err) {
-            return log.error("Unable to rename file to " + directory + "/200: " + err);
+            log.error("Unable to rename file to " + ctx.directory + "/200: " + err);
+            ctx.events.emit('error');
+            return;
           }
+          ctx.events.emit('end', ctx.counter, ctx.directory + "/200");
       });
       }, 200);
     });
@@ -147,31 +158,167 @@ function copyHeadersIfExists(headers, from_headers, callback) {
   });
 }
 
+var current_request = {}
+
 function proxy(response, headers, parsed_url, directory, body_chunks) {
-  log.debug("Create directory " + directory);
-  mkdirp(directory, function(err) {
+  if (!current_request[directory]) {
+    current_request[directory] = {
+      status: 'wait_headers',
+      events: new events.EventEmitter,
+      headers: headers,
+      parsed_url: parsed_url,
+      directory: directory,
+      body_chunks: body_chunks,
+    }
+    current_request[directory].events.on('error', function() {
+      delete current_request[directory];
+    });
+    current_request[directory].events.on('no_body', function() {
+      delete current_request[directory];
+    });
+    current_request[directory].events.on('end', function() {
+      delete current_request[directory];
+    });
+    process.nextTick(function() {
+      run_proxy_request(current_request[directory]);
+    });
+  }
+  current_request[directory].events.on('error', function() {
+    response.statusCode = 500;
+    response.end();
+  });
+  var ctx = current_request[directory];
+  var fd = undefined;
+  var current = 0;
+  var buffer_in = new Buffer(64 * 1024);
+  var stop = false;
+  var read_data = function() {
+    fs.read(fd, buffer_in, 0, buffer_in.length, current, function(err, bytesRead, buffer_in) {
+      if (err) {
+        log.error('Error reading', filename, err);
+        fd.close();
+        return;
+      }
+      if (stop) {
+        return;
+      }
+      current += bytesRead;
+      if (bytesRead > 0) {
+        log.debug('Sent', bytesRead, 'from temp file, current', current, ' for', ctx.directory);
+        var buffer_out = new Buffer(bytesRead);
+        buffer_in.copy(buffer_out, 0, 0, bytesRead);
+        response.write(buffer_out.slice(0, bytesRead));
+      }
+      if (bytesRead == buffer_in.length) {
+        read_data();
+      }
+      else {
+       ctx.events.once('data', read_data);
+      }
+    });
+  };
+  var start_streaming = function() {
+    log.info('Starting streaming', ctx.directory);
+    copyHeadersIfExists(headers_to_copy_from_disk, ctx.result_headers, function(k, v) {response.setHeader(k, v)});
+    fs.open(ctx.filename, 'r', function(err, file_fd) {
+      if (err) {
+        response.statusCode = 500;
+        response.end();
+        log.error('Unable to open file for reading', ctx.filename, err);
+      }
+      fd = file_fd;
+      log.debug('File opened', ctx.filename);
+      ctx.events.once('data', read_data);
+    });
+    ctx.events.on('end', function(size, filename) {
+      fs.close(fd);
+      stop = true;
+      if (current != size) {
+        log.info('Have sent to client', current, 'expected', size, ', getting data from', filename, 'request', ctx.directory);
+        fs.open(filename, 'r', function(err, fd) {
+          if (err) {
+            log.error('Unable to open file', filename, err);
+            return;
+          }
+          var to_be_read = size - current;
+          var buffer_in = new Buffer(64 * 1024);
+          var r = function() {
+            fs.read(fd, buffer_in, 0, buffer_in.length, current, function(err, bytesRead, buffer_in) {
+              if (err) {
+                log.error('Error reading', filename, err);
+                return;
+              }
+              to_be_read -= bytesRead;
+              current += bytesRead;
+              log.debug('Sent', bytesRead, 'from real file, current', current, 'for', ctx.directory);
+              var buffer_out = new Buffer(bytesRead);
+              buffer_in.copy(buffer_out, 0, 0, bytesRead);
+              response.write(buffer_out);
+              if (to_be_read == 0) {
+                log.info('All data sent to client', ctx.directory);
+                response.end();
+                fs.close(fd);
+                return;
+              }
+              if (bytesRead != buffer_in.length) {
+                log.error('Wrong reading length', bytesRead, 'exptected', buffer_in.length, 'remaining', to_be_read, 'reading position', current - bytesRead);
+                return;
+              }
+              r();
+            })
+          };
+          r();
+        })
+      }
+      else {
+        log.info('All data has been sent to client from temp file', ctx.directory)
+        fs.close(fd);
+        response.end();
+      }
+    });
+  };
+  if (ctx.status == 'wait_headers') {
+    log.info('Waiting headers for', ctx.directory);
+    ctx.events.on('no_body', function() {
+      process_req(response, headers, parsed_url, directory, body_chunks, function() {
+        response.statusCode = 500;
+        response.end();
+        log.error('Internal error, no file found after proxy request', ctx.directory);
+      });
+    });
+    ctx.events.on('streaming', function() {
+      start_streaming();
+    });
+  }
+  else {
+    start_streaming();
+  }
+}
+
+function run_proxy_request(ctx) {
+  log.debug("Create directory " + ctx.directory);
+  mkdirp(ctx.directory, function(err) {
     if (err) {
-      log.error("Unable to create directory " + directory + " : " + err);
-      response.statusCode = 500;
-      response.end();
+      log.error("Unable to create directory " + ctx.directory + " : " + err);
+      ctx.events.emit('error');
       return;
     }
-    log.debug("Directory created " + directory);
-    log.info("Start proxy request " + directory);
+    log.debug("Directory created " + ctx.directory);
+    log.info("Start proxy request " + ctx.directory);
     if (http_proxy) {
-      var full_path = parsed_url.protocol + '//' + parsed_url.hostname;
-      if (parsed_url.port) {
-        full_path += ':' + parsed_url.port;
+      var full_path = ctx.parsed_url.protocol + '//' + ctx.parsed_url.hostname;
+      if (ctx.parsed_url.port) {
+        full_path += ':' + ctx.parsed_url.port;
       }
-      full_path += parsed_url.path;
+      full_path += ctx.parsed_url.path;
       parsed_url.path = full_path;
       parsed_url.protocol = http_proxy.protocol;
       parsed_url.hostname = http_proxy.hostname;
       parsed_url.port = http_proxy.port;
     }
-    if (body_chunks) {
-      parsed_url.method = 'POST';
-      parsed_url.headers = {};
+    if (ctx.body_chunks) {
+      ctx.parsed_url.method = 'POST';
+      ctx.parsed_url.headers = {};
       copyHeadersIfExists([
         'Content-Type',
         'Accept',
@@ -179,29 +326,23 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
         'Content-Encoding',
         'Accept-Encoding',
         'Content-length',
-        ], headers, function(k, v) {parsed_url.headers[k] = v;});
+        ], ctx.headers, function(k, v) {ctx.parsed_url.headers[k] = v;});
     }
-    var proxy_req = http.request(parsed_url, function(result) {
+    var proxy_req = http.request(ctx.parsed_url, function(result) {
       var f = proxy_map[result.statusCode];
       if (!f) {
-        log.notice("Wrong return code " + result.statusCode + " for proxy request  " + directory);
-        response.statusCode = 500;
-        response.end();
+        log.notice("Wrong return code " + result.statusCode + " for proxy request  " + ctx.directory);
+        ctx.events.emit('error');
         return;
       }
-      f(result, directory, response, function() {
-        process_req(response, headers, parsed_url, directory, body_chunks, function() {
-          log.error('Internal error, no file found after proxy request for', directory);
-        });
-      });
+      f(result, ctx);
     });
     proxy_req.on('error', function(e) {
-      log.error("Error while proxy request " + directory + " : " + e);
-      response.statusCode = 500;
-      response.end();
+      log.error("Error while proxy request " + ctx.directory + " : " + e);
+      ctx.events.emit('error');
     });
-    if (body_chunks) {
-      body_chunks.forEach(function(chunk) {
+    if (ctx.body_chunks) {
+      ctx.body_chunks.forEach(function(chunk) {
         proxy_req.write(chunk);
       })
     }
@@ -226,8 +367,7 @@ function send_redirect(response, code, filename) {
 
 function streamFile(filename, response) {
   var stream = fs.createReadStream(filename, { flags: 'r', bufferSize: 64 * 1024});
-  var gunzip = zlib.createGunzip();
-  stream.pipe(gunzip).pipe(response);
+  stream.pipe(response);
   stream.on('error', function(err) {
     log.error("Unable to read file " + filename + " : " + err);
     response.statusCode = 500;
@@ -260,28 +400,20 @@ var process_map = {
           response.end();
           return;
         }
-        zlib.gunzip(data, function(err, data) {
-          if (err) {
-            log.error('Unable to gunzip ' + filename + '.headers file:' + err);
-            response.statusCode = 500;
+        orig_headers = JSON.parse(data.toString());
+        if (headers['if-modified-since'] && orig_headers['last-modified']) {
+          if_modified = Date.parse(headers['if-modified-since']);
+          last_modified = Date.parse(orig_headers['last-modified']);
+          if (if_modified >= last_modified) {
+            log.debug("Return 304 for request " + filename);
+            response.statusCode = 304;
             response.end();
+            log_operation(':');
             return;
           }
-          orig_headers = JSON.parse(data.toString());
-          if (headers['if-modified-since'] && orig_headers['last-modified']) {
-            if_modified = Date.parse(headers['if-modified-since']);
-            last_modified = Date.parse(orig_headers['last-modified']);
-            if (if_modified >= last_modified) {
-              log.debug("Return 304 for request " + filename);
-              response.statusCode = 304;
-              response.end();
-              log_operation(':');
-              return;
-            }
-          }
-          copyHeadersIfExists(headers_to_copy_from_disk, orig_headers, function(k, v) {response.setHeader(k, v)});
-          streamFile(filename, response);
-        });
+        }
+        copyHeadersIfExists(headers_to_copy_from_disk, orig_headers, function(k, v) {response.setHeader(k, v)});
+        streamFile(filename, response);
       });
     }, function() {
       response.setHeader('Content-Length', stats.size);
