@@ -436,7 +436,7 @@ function process_req(response, headers, parsed_url, directory, body_chunks, not_
 
 function process_req_internal(l, response, headers, parsed_url, directory, body_chunks, not_found) {
   if (l.length == 0) {
-    return  not_found(response, headers, parsed_url, directory, body_chunks);
+    return not_found(response, headers, parsed_url, directory, body_chunks);
   }
   var code = l.shift();
   log.debug('Searching', code, 'for', directory);
@@ -467,15 +467,20 @@ http.createServer(function (request, response) {
     return;
   }
   log.debug("Incoming request " + parsed_url.href);
-  var directory = "storage/" + parsed_url.host + parsed_url.pathname;
+  var directory = "storage/" + parsed_url.host + (parsed_url.pathname || '');
   if (parsed_url.query) {
     var shasum = crypto.createHash('sha1');
     shasum.update(parsed_url.query);
     var hash = shasum.digest('hex');
     directory += '/' + hash;
   }
+  var not_found = argv.no_proxy ? function(response, headers, parsed_url, directory) {
+    response.statusCode = 500;
+    response.end();
+    log.error('File not found on proxy', directory);
+  } : proxy;
   if (request.method == 'GET') {
-    process_req(response, request.headers, parsed_url, directory, undefined, proxy);
+    process_req(response, request.headers, parsed_url, directory, undefined, not_found);
   }
   else {
     var shasum = crypto.createHash('sha1');
@@ -487,7 +492,7 @@ http.createServer(function (request, response) {
     request.on('end', function() {
       var hash = shasum.digest('hex');
       directory += '/' + hash;
-      process_req(response, request.headers, parsed_url, directory, body_chunks, proxy);
+      process_req(response, request.headers, parsed_url, directory, body_chunks, not_found);
     })
   }
 }).on('clientError', function(e) {
