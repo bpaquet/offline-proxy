@@ -449,6 +449,8 @@ function process_req_internal(l, response, headers, parsed_url, directory, body_
   });
 }
 
+var current_git_clone = {}
+
 function extract_git_path(string) {
   if (path.basename(string).match(/\.git$/)) {
     return string;
@@ -494,25 +496,36 @@ function process_git_request(request, response, directory) {
       serve_static_file(request, response);
     }
     else {
-      log.info("Cloning " + git_repo_url + " to " + git_repo_path);
-      var command = "";
-      if (argv.http_proxy) {
-        command += "export http_proxy=" + argv.http_proxy + " && ";
+      if (!current_git_clone[git_repo_url]) {
+        current_git_clone[git_repo_url] = new events.EventEmitter;
+        log.notice("Cloning " + git_repo_url + " to " + git_repo_path);
+        var command = "";
+        if (argv.http_proxy) {
+          command += "export http_proxy=" + argv.http_proxy + " && ";
+        }
+        command += "git clone --bare " + git_repo_url + " " + git_repo_path + " && cd " + git_repo_path + " && git update-server-info";
+        var child = spawn("/bin/sh", ['-c', command]);
+        log.debug('Launching command', command);
+        child.on('exit', function(code) {
+          log.debug('Command result', code);
+          if (code == 0) {
+            log.notice("Git clone ok", git_repo_url);
+            current_git_clone[git_repo_url].emit('end');
+          }
+          else {
+            log.info("Wrong return code for command", command, ":", code);
+            current_git_clone[git_repo_url].emit('error');
+          }
+          delete current_git_clone[git_repo_url];
+        });
       }
-      command += "git clone --bare " + git_repo_url + " " + git_repo_path + " && cd " + git_repo_path + " && git update-server-info";
-      var child = spawn("/bin/sh", ['-c', command]);
-      log.debug('Launching command', command);
-      child.on('exit', function(code) {
-        log.debug('Command result', code);
-        if (code == 0) {
-          serve_static_file(request, response);
-        }
-        else {
-          log.info("Wrong return code for command", command, ":", code);
-          response.statusCode = 500;
-          response.end();
-          return;
-        }
+      current_git_clone[git_repo_url].on('end', function() {
+        serve_static_file(request, response);
+      });
+      current_git_clone[git_repo_url].on('error', function() {
+        response.statusCode = 500;
+        response.end();
+        return;
       });
     }
   });
