@@ -492,7 +492,7 @@ function process_git_request(request, response, directory) {
     });
   }
   fs.exists(git_repo_path, function(exists) {
-    if (exists) {
+    if (exists && !current_git_clone[git_repo_url]) {
       serve_static_file(request, response);
     }
     else {
