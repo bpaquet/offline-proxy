@@ -459,70 +459,65 @@ function extract_git_path(string) {
   return dirname == string ? null : extract_git_path(dirname);
 }
 
-function process_git_request(request, response, directory) {
+function process_git_request(response, url, directory) {
   var git_repo_path = extract_git_path(directory);
   if (!git_repo_path) {
-    log.error("Unable to extract git path " + directory);
+    log.error('Unable to extract git path ' + directory);
     response.statusCode = 500;
     response.end();
     return;
   }
-  var git_repo_url = extract_git_path(request.url);
-  if (!git_repo_url) {
-    log.error("Unable to extract git path " + request.url);
-    response.statusCode = 500;
-    response.end();
-    return;
-  }
-  var serve_static_file = function(request, response) {
-    var f = git_repo_path + request.url.substring(git_repo_url.length);
-    fs.exists(f, function(exists) {
-      if (exists) {
-        var s = fs.createReadStream(f);
-        response.statusCode = 200;
-        s.pipe(response);
-        return;
-      }
-      else {
-        log.debug("Git file not found " + f);
-        response.statusCode= 404;
-        response.end();
-        return;
-      }
+  var serve_static_file = function(response) {
+    file_exist(directory, function() {
+      var s = fs.createReadStream(directory);
+      response.statusCode = 200;
+      s.pipe(response);
+    }, function() {
+      log.debug('Git file not found', directory);
+      response.statusCode= 404;
+      response.end();
     });
-  }
+  };
+  log.debug('Serving git request on repo', git_repo_path, 'file', directory);
   fs.exists(git_repo_path, function(exists) {
-    if (exists && !current_git_clone[git_repo_url]) {
-      serve_static_file(request, response);
+    if (exists && !current_git_clone[git_repo_path]) {
+      serve_static_file(response);
     }
     else {
-      if (!current_git_clone[git_repo_url]) {
-        current_git_clone[git_repo_url] = new events.EventEmitter;
-        log.notice("Cloning " + git_repo_url + " to " + git_repo_path);
-        var command = "";
-        if (argv.http_proxy) {
-          command += "export http_proxy=" + argv.http_proxy + " && ";
+      if (!current_git_clone[git_repo_path]) {
+        var git_repo_url = extract_git_path(url);
+        if (!git_repo_url) {
+          log.error('Unable to extract git path ' + url);
+          response.statusCode = 500;
+          response.end();
+          return;
         }
-        command += "git clone --bare " + git_repo_url + " " + git_repo_path + " && cd " + git_repo_path + " && git update-server-info";
-        var child = spawn("/bin/sh", ['-c', command]);
+        current_git_clone[git_repo_path] = new events.EventEmitter;
+        log.notice('Cloning ' + git_repo_url + ' to ' + git_repo_path);
+        var command = '';
+        if (argv.http_proxy) {
+          command += 'export http_proxy=' + argv.http_proxy + ' && ';
+        }
+        command += 'git clone --bare ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
+        var child = spawn('/bin/sh', ['-c', command]);
         log.debug('Launching command', command);
         child.on('exit', function(code) {
           log.debug('Command result', code);
           if (code == 0) {
-            log.notice("Git clone ok", git_repo_url);
-            current_git_clone[git_repo_url].emit('end');
+            log.notice('Git clone ok', git_repo_url);
+            current_git_clone[git_repo_path].emit('end');
           }
           else {
-            log.info("Wrong return code for command", command, ":", code);
-            current_git_clone[git_repo_url].emit('error');
+            log.info('Wrong return code for command', command, ':', code);
+            current_git_clone[git_repo_path].emit('error');
           }
-          delete current_git_clone[git_repo_url];
+          delete current_git_clone[git_repo_path];
         });
       }
-      current_git_clone[git_repo_url].on('end', function() {
-        serve_static_file(request, response);
+      current_git_clone[git_repo_path].on('end', function() {
+        serve_static_file(response);
       });
-      current_git_clone[git_repo_url].on('error', function() {
+      current_git_clone[git_repo_path].on('error', function() {
         response.statusCode = 500;
         response.end();
         return;
@@ -553,7 +548,7 @@ http.createServer(function (request, response) {
   var directory = "storage/" + parsed_url.host + (parsed_url.pathname || '');
   log.debug("Incoming request " + parsed_url.href);
   if (request.headers['user-agent'] && request.headers['user-agent'].match(/^git/)) {
-    process_git_request(request, response, directory);
+    process_git_request(response, request.url, directory);
     return;
   }
   if (parsed_url.query) {
