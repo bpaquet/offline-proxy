@@ -539,6 +539,32 @@ http.createServer(function (request, response) {
     response.end();
     return;
   }
+  if (request.method == 'GET' && parsed_url.path == '/reload_all_git_repos') {
+    var command = '';
+    if (argv.http_proxy) {
+      command += 'export http_proxy=' + argv.http_proxy + ' && ';
+    }
+    command += 'cd storage && export home_dir=`pwd`; for i in `find . -name "packed-refs"`; do echo "Reloading $i" && cd $home_dir && cd `dirname $i` && git fetch -q origin || exit 1; done';
+    var child = spawn('/bin/sh', ['-c', command]);
+    var out = '';
+    log.debug('Launching command', command);
+    child.stdout.on('data', function(d) {
+      out += d.toString();
+    });
+    child.on('exit', function(code) {
+      log.debug('Command result', code);
+      if (code == 0) {
+        response.statusCode = 200;
+        response.setHeader('Content-Type', 'text/plain');
+        response.end(out);
+      }
+      else {
+        response.statusCode = 500;
+        response.end();
+      }
+    });
+    return;
+  }
   if (parsed_url.protocol != 'http:') {
      log.error("Wrong protoocol " + parsed_url.protocol);
     response.statusCode = 500;
