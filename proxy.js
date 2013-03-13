@@ -544,7 +544,7 @@ http.createServer(function (request, response) {
     if (argv.http_proxy) {
       command += 'export http_proxy=' + argv.http_proxy + ' && ';
     }
-    command += 'cd storage && export home_dir=`pwd`; for i in `find . -name "packed-refs"`; do echo "Reloading $i" && cd $home_dir && cd `dirname $i` && git fetch -q origin || exit 1; done';
+    command += 'cd storage && export home_dir=`pwd`; for i in `find . -name "packed-refs"`; do echo "Reloading `dirname $i`" && cd $home_dir && cd `dirname $i` && git fetch -q origin || exit 1; done && echo "OK";';
     var child = spawn('/bin/sh', ['-c', command]);
     var out = '';
     log.debug('Launching command', command);
