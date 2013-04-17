@@ -114,7 +114,6 @@ var proxy_map = {
       if (err) {
         log.error("Unable to write headers file " + ctx.directory + "/200.headers: " + err);
         ctx.events.emit('error');
-        return;
       }
     });
     var stream = fs.createWriteStream(ctx.directory + "/200.temp", {flags : 'w'});
@@ -152,7 +151,7 @@ var proxy_map = {
       //HTTP Client never emit this event
     });
   }
-}
+};
 
 function copyHeadersIfExists(headers, from_headers, callback) {
   headers.forEach(function(h) {
@@ -163,7 +162,7 @@ function copyHeadersIfExists(headers, from_headers, callback) {
   });
 }
 
-var current_request = {}
+var current_request = {};
 
 function proxy(response, headers, parsed_url, directory, body_chunks) {
   if (!current_request[directory]) {
@@ -174,7 +173,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
       parsed_url: parsed_url,
       directory: directory,
       body_chunks: body_chunks,
-    }
+    };
     current_request[directory].events.on('error', function() {
       delete current_request[directory];
     });
@@ -276,7 +275,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
         })
       }
       else {
-        log.info('All data has been sent to client from temp file', ctx.directory)
+        log.info('All data has been sent to client from temp file', ctx.directory);
         fs.close(fd);
         response.end();
       }
@@ -405,7 +404,7 @@ var process_map = {
           response.end();
           return;
         }
-        orig_headers = JSON.parse(data.toString());
+        var orig_headers = JSON.parse(data.toString());
         if (headers['if-modified-since'] && orig_headers['last-modified']) {
           if_modified = Date.parse(headers['if-modified-since']);
           last_modified = Date.parse(orig_headers['last-modified']);
@@ -425,7 +424,7 @@ var process_map = {
       streamFile(filename, response);
     });
   }
-}
+};
 
 var responses = [];
 for(var i in process_map) {
@@ -449,7 +448,7 @@ function process_req_internal(l, response, headers, parsed_url, directory, body_
   });
 }
 
-var current_git_clone = {}
+var current_git_clone = {};
 
 function extract_git_path(string) {
   if (path.basename(string).match(/\.git$/)) {
@@ -520,7 +519,6 @@ function process_git_request(response, url, directory) {
       current_git_clone[git_repo_path].on('error', function() {
         response.statusCode = 500;
         response.end();
-        return;
       });
     }
   });
@@ -597,7 +595,7 @@ http.createServer(function (request, response) {
     request.on('data', function(chunk) {
       shasum.update(chunk);
       body_chunks.push(chunk);
-    })
+    });
     request.on('end', function() {
       var hash = shasum.digest('hex');
       directory += '/' + hash;
