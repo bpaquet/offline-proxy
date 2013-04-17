@@ -336,7 +336,7 @@ function run_proxy_request(ctx) {
     var proxy_req = http.request(ctx.parsed_url, function(result) {
       var f = proxy_map[result.statusCode];
       if (!f) {
-        log.notice("Wrong return code " + result.statusCode + " for proxy request  " + ctx.directory);
+        log.notice("Wrong return code " + result.statusCode + " for proxy request " + ctx.directory);
         ctx.events.emit('error');
         return;
       }
