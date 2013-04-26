@@ -80,7 +80,7 @@ var proxy_map = {
   302: function(result, ctx) {
     fs.writeFile(ctx.directory + "/302", result.headers.location, function(err) {
       if (err) {
-        log.error("Unable to write file " + ctx.directory + "/302 : " + err);
+        log.error(ctx.from + "Unable to write file " + ctx.directory + "/302 : " + err);
         ctx.events.emit('error');
         return;
       }
@@ -90,7 +90,7 @@ var proxy_map = {
   301: function(result, ctx) {
     fs.writeFile(ctx.directory + "/301", result.headers.location, function(err) {
       if (err) {
-        log.error("Unable to write file " + ctx.directory + "/301 : " + err);
+        log.error(ctx.from + "Unable to write file " + ctx.directory + "/301 : " + err);
         ctx.events.emit('error');
         return;
       }
@@ -100,7 +100,7 @@ var proxy_map = {
   404: function(result, ctx) {
     fs.writeFile(ctx.directory + "/404", "", function(err) {
       if (err) {
-        log.error("Unable to write file " + ctx.directory + "/404 : " + err);
+        log.error(ctx.from + "Unable to write file " + ctx.directory + "/404 : " + err);
         ctx.events.emit('error');
         return;
       }
@@ -109,10 +109,10 @@ var proxy_map = {
   },
   200: function(result, ctx) {
     var length = result.headers['content-length'];
-    log.notice("Start receiving data for " + ctx.directory + ", Content-Length " + formatSize(length));
+    log.notice(ctx.from + "Start receiving data for " + ctx.directory + ", Content-Length " + formatSize(length));
     fs.writeFile(ctx.directory + "/200.headers", JSON.stringify(result.headers), function(err) {
       if (err) {
-        log.error("Unable to write headers file " + ctx.directory + "/200.headers: " + err);
+        log.error(ctx.from + "Unable to write headers file " + ctx.directory + "/200.headers: " + err);
         ctx.events.emit('error');
         return;
       }
@@ -120,7 +120,7 @@ var proxy_map = {
     var stream = fs.createWriteStream(ctx.directory + "/200.temp", {flags : 'w'});
     ctx.counter = 0;
     stream.on('error', function(err) {
-      log.error("Unable to write file " + ctx.directory + "/200.temp: " + err);
+      log.error(ctx.from + "Unable to write file " + ctx.directory + "/200.temp: " + err);
     });
     stream.on('open', function() {
       ctx.status = 'streaming';
@@ -130,17 +130,17 @@ var proxy_map = {
     });
     result.on('data', function(chunk) {
       ctx.counter += chunk.length;
-      log.info('Received ' + ctx.directory + ': ' + formatSize(ctx.counter) + '/' + formatSize(length));
+      log.info(ctx.from + 'Received ' + ctx.directory + ': ' + formatSize(ctx.counter) + '/' + formatSize(length));
       stream.write(chunk);
       ctx.events.emit('data');
     });
     result.on('end', function() {
       stream.end();
-      log.notice("End of proxy request ok " + ctx.directory + ", size " + formatSize(ctx.counter));
+      log.notice(ctx.from + "End of proxy request ok " + ctx.directory + ", size " + formatSize(ctx.counter));
       setTimeout(function() {
         fs.rename(ctx.directory + "/200.temp", ctx.directory + "/200", function(err) {
           if (err) {
-            log.error("Unable to rename file to " + ctx.directory + "/200: " + err);
+            log.error(ctx.from + "Unable to rename file to " + ctx.directory + "/200: " + err);
             ctx.events.emit('error');
             return;
           }
@@ -174,6 +174,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
       parsed_url: parsed_url,
       directory: directory,
       body_chunks: body_chunks,
+      from: response.from,
     }
     current_request[directory].events.on('error', function() {
       delete current_request[directory];
@@ -200,7 +201,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
   var read_data = function() {
     fs.read(fd, buffer_in, 0, buffer_in.length, current, function(err, bytesRead, buffer_in) {
       if (err) {
-        log.error('Error reading', filename, err);
+        log.error(ctx.from + 'Error reading', filename, err);
         fd.close();
         return;
       }
@@ -209,7 +210,7 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
       }
       current += bytesRead;
       if (bytesRead > 0) {
-        log.debug('Sent', bytesRead, 'from temp file, current', current, ' for', ctx.directory);
+        log.debug(ctx.from + 'Sent', bytesRead, 'from temp file, current', current, ' for', ctx.directory);
         var buffer_out = new Buffer(bytesRead);
         buffer_in.copy(buffer_out, 0, 0, bytesRead);
         response.write(buffer_out.slice(0, bytesRead));
@@ -223,26 +224,26 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
     });
   };
   var start_streaming = function() {
-    log.info('Starting streaming', ctx.directory);
+    log.info(ctx.from + 'Starting streaming', ctx.directory);
     copyHeadersIfExists(headers_to_copy_from_disk, ctx.result_headers, function(k, v) {response.setHeader(k, v)});
     fs.open(ctx.filename, 'r', function(err, file_fd) {
       if (err) {
         response.statusCode = 500;
         response.end();
-        log.error('Unable to open file for reading', ctx.filename, err);
+        log.error(ctx.from + 'Unable to open file for reading', ctx.filename, err);
       }
       fd = file_fd;
-      log.debug('File opened', ctx.filename);
+      log.debug(ctx.from + 'File opened', ctx.filename);
       ctx.events.once('data', read_data);
     });
     ctx.events.on('end', function(size, filename) {
       fs.close(fd);
       stop = true;
       if (current != size) {
-        log.info('Have sent to client', current, 'expected', size, ', getting data from', filename, 'request', ctx.directory);
+        log.info(ctx.from + 'Have sent to client', current, 'expected', size, ', getting data from', filename, 'request', ctx.directory);
         fs.open(filename, 'r', function(err, fd) {
           if (err) {
-            log.error('Unable to open file', filename, err);
+            log.error(ctx.from + 'Unable to open file', filename, err);
             return;
           }
           var to_be_read = size - current;
@@ -250,23 +251,23 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
           var r = function() {
             fs.read(fd, buffer_in, 0, buffer_in.length, current, function(err, bytesRead, buffer_in) {
               if (err) {
-                log.error('Error reading', filename, err);
+                log.error(ctx.from + 'Error reading', filename, err);
                 return;
               }
               to_be_read -= bytesRead;
               current += bytesRead;
-              log.debug('Sent', bytesRead, 'from real file, current', current, 'for', ctx.directory);
+              log.debug(ctx.from + 'Sent', bytesRead, 'from real file, current', current, 'for', ctx.directory);
               var buffer_out = new Buffer(bytesRead);
               buffer_in.copy(buffer_out, 0, 0, bytesRead);
               response.write(buffer_out);
               if (to_be_read == 0) {
-                log.info('All data sent to client', ctx.directory);
+                log.info(ctx.from + 'All data sent to client', ctx.directory);
                 response.end();
                 fs.close(fd);
                 return;
               }
               if (bytesRead != buffer_in.length) {
-                log.error('Wrong reading length', bytesRead, 'exptected', buffer_in.length, 'remaining', to_be_read, 'reading position', current - bytesRead);
+                log.error(ctx.from + 'Wrong reading length', bytesRead, 'exptected', buffer_in.length, 'remaining', to_be_read, 'reading position', current - bytesRead);
                 return;
               }
               r();
@@ -276,19 +277,19 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
         })
       }
       else {
-        log.info('All data has been sent to client from temp file', ctx.directory)
+        log.info(ctx.from + 'All data has been sent to client from temp file', ctx.directory)
         fs.close(fd);
         response.end();
       }
     });
   };
   if (ctx.status == 'wait_headers') {
-    log.info('Waiting headers for', ctx.directory);
+    log.info(ctx.from + 'Waiting headers for', ctx.directory);
     ctx.events.on('no_body', function() {
       process_req(response, headers, parsed_url, directory, body_chunks, function() {
         response.statusCode = 500;
         response.end();
-        log.error('Internal error, no file found after proxy request', ctx.directory);
+        log.error(ctx.from + 'Internal error, no file found after proxy request', ctx.directory);
       });
     });
     ctx.events.on('streaming', function() {
@@ -301,15 +302,15 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
 }
 
 function run_proxy_request(ctx) {
-  log.debug("Create directory " + ctx.directory);
+  log.debug(ctx.from + "Create directory " + ctx.directory);
   mkdirp(ctx.directory, function(err) {
     if (err) {
-      log.error("Unable to create directory " + ctx.directory + " : " + err);
+      log.error(ctx.from + "Unable to create directory " + ctx.directory + " : " + err);
       ctx.events.emit('error');
       return;
     }
-    log.debug("Directory created " + ctx.directory);
-    log.info("Start proxy request " + ctx.directory);
+    log.debug(ctx.from + "Directory created " + ctx.directory);
+    log.info(ctx.from + "Start proxy request " + ctx.directory);
     if (http_proxy) {
       var full_path = ctx.parsed_url.protocol + '//' + ctx.parsed_url.hostname;
       if (ctx.parsed_url.port) {
@@ -336,14 +337,14 @@ function run_proxy_request(ctx) {
     var proxy_req = http.request(ctx.parsed_url, function(result) {
       var f = proxy_map[result.statusCode];
       if (!f) {
-        log.notice("Wrong return code " + result.statusCode + " for proxy request  " + ctx.directory);
+        log.notice(ctx.from + "Wrong return code " + result.statusCode + " for proxy request  " + ctx.directory);
         ctx.events.emit('error');
         return;
       }
       f(result, ctx);
     });
     proxy_req.on('error', function(e) {
-      log.error("Error while proxy request " + ctx.directory + " : " + e);
+      log.error(ctx.from + "Error while proxy request " + ctx.directory + " : " + e);
       ctx.events.emit('error');
     });
     if (ctx.body_chunks) {
@@ -358,7 +359,7 @@ function run_proxy_request(ctx) {
 function send_redirect(response, code, filename) {
   fs.readFile(filename, function(err, data) {
     if (err) {
-      log.error("Unable to read file " + filename);
+      log.error(response.from + "Unable to read file " + filename);
       response.statusCode = 500;
       response.end();
       return;
@@ -374,7 +375,7 @@ function streamFile(filename, response) {
   var stream = fs.createReadStream(filename, { flags: 'r', bufferSize: 64 * 1024});
   stream.pipe(response);
   stream.on('error', function(err) {
-    log.error("Unable to read file " + filename + " : " + err);
+    log.error(response.from + "Unable to read file " + filename + " : " + err);
     response.statusCode = 500;
     response.end();
   }).on('close', function() {
@@ -391,7 +392,7 @@ var process_map = {
     send_redirect(response, 302, filename);
   },
   404: function(response, headers, filename, stats) {
-    log.info("Return 404 for request " + filename);
+    log.info(response.from + "Return 404 for request " + filename);
     response.statusCode = 404;
     response.end();
     log_operation();
@@ -400,7 +401,7 @@ var process_map = {
     file_exist(filename + '.headers', function(filename2, stats) {
       fs.readFile(filename + '.headers', function(err, data) {
         if (err) {
-          log.error('Unable to read ' + filename + '.headers file:' + err);
+          log.error(response.from + 'Unable to read ' + filename + '.headers file:' + err);
           response.statusCode = 500;
           response.end();
           return;
@@ -410,7 +411,7 @@ var process_map = {
           if_modified = Date.parse(headers['if-modified-since']);
           last_modified = Date.parse(orig_headers['last-modified']);
           if (if_modified >= last_modified) {
-            log.debug("Return 304 for request " + filename);
+            log.debug(response.from + "Return 304 for request " + filename);
             response.statusCode = 304;
             response.end();
             log_operation(':');
@@ -441,7 +442,7 @@ function process_req_internal(l, response, headers, parsed_url, directory, body_
     return not_found(response, headers, parsed_url, directory, body_chunks);
   }
   var code = l.shift();
-  log.debug('Searching', code, 'for', directory);
+  log.debug(response.from + 'Searching', code, 'for', directory);
   file_exist(directory + '/' + code, function(filename, stats) {
     process_map[code](response, headers, filename, stats);
   }, function(filename) {
@@ -462,7 +463,7 @@ function extract_git_path(string) {
 function process_git_request(response, url, directory) {
   var git_repo_path = extract_git_path(directory);
   if (!git_repo_path) {
-    log.error('Unable to extract git path ' + directory);
+    log.error(response.from + 'Unable to extract git path ' + directory);
     response.statusCode = 500;
     response.end();
     return;
@@ -473,12 +474,12 @@ function process_git_request(response, url, directory) {
       response.statusCode = 200;
       s.pipe(response);
     }, function() {
-      log.debug('Git file not found', directory);
+      log.debug(response.from + 'Git file not found', directory);
       response.statusCode= 404;
       response.end();
     });
   };
-  log.debug('Serving git request on repo', git_repo_path, 'file', directory);
+  log.debug(response.from + 'Serving git request on repo', git_repo_path, 'file', directory);
   fs.exists(git_repo_path, function(exists) {
     if (exists && !current_git_clone[git_repo_path]) {
       serve_static_file(response);
@@ -487,28 +488,28 @@ function process_git_request(response, url, directory) {
       if (!current_git_clone[git_repo_path]) {
         var git_repo_url = extract_git_path(url);
         if (!git_repo_url) {
-          log.error('Unable to extract git path ' + url);
+          log.error(response.from + 'Unable to extract git path ' + url);
           response.statusCode = 500;
           response.end();
           return;
         }
         current_git_clone[git_repo_path] = new events.EventEmitter;
-        log.notice('Cloning ' + git_repo_url + ' to ' + git_repo_path);
+        log.notice(response.from + 'Cloning ' + git_repo_url + ' to ' + git_repo_path);
         var command = '';
         if (argv.http_proxy) {
           command += 'export http_proxy=' + argv.http_proxy + ' && ';
         }
-        command += 'git clone --mirror ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
+        command += 'git clone --bare ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
         var child = spawn('/bin/sh', ['-c', command]);
-        log.debug('Launching command', command);
+        log.debug(response.from + 'Launching command', command);
         child.on('exit', function(code) {
-          log.debug('Command result', code);
+          log.debug(response.from + 'Command result', code);
           if (code == 0) {
-            log.notice('Git clone ok', git_repo_url);
+            log.notice(response.from + 'Git clone ok', git_repo_url);
             current_git_clone[git_repo_path].emit('end');
           }
           else {
-            log.info('Wrong return code for command', command, ':', code);
+            log.info(response.from + 'Wrong return code for command', command, ':', code);
             current_git_clone[git_repo_path].emit('error');
           }
           delete current_git_clone[git_repo_path];
@@ -526,15 +527,20 @@ function process_git_request(response, url, directory) {
   });
 }
 
+function extract_from(request) {
+  return "[" + (request.headers['x-forwarded-for'] || request.connection.remoteAddress) + "] ";
+}
+
 http.createServer(function (request, response) {
   if (request.method != 'GET' && request.method != 'POST') {
     response.statusCode = 405;
     response.end();
     return;
   }
+  response.from = extract_from(request);
   var parsed_url = url.parse(request.url);
   if (! parsed_url) {
-    log.error("Unable to parse url " + request.url);
+    log.error(response.from + "Unable to parse url " + request.url);
     response.statusCode = 500;
     response.end();
     return;
@@ -547,12 +553,12 @@ http.createServer(function (request, response) {
     command += 'cd storage && export home_dir=`pwd`; for i in `find . -name "packed-refs"`; do echo "Reloading `dirname $i`" && cd $home_dir && cd `dirname $i` && git fetch -q origin && git update-server-info || exit 1; done && echo "OK";';
     var child = spawn('/bin/sh', ['-c', command]);
     var out = '';
-    log.debug('Launching command', command);
+    log.debug(response.from + 'Launching command', command);
     child.stdout.on('data', function(d) {
       out += d.toString();
     });
     child.on('exit', function(code) {
-      log.debug('Command result', code);
+      log.debug(response.from + 'Command result', code);
       if (code == 0) {
         response.statusCode = 200;
         response.setHeader('Content-Type', 'text/plain');
@@ -566,13 +572,13 @@ http.createServer(function (request, response) {
     return;
   }
   if (parsed_url.protocol != 'http:') {
-     log.error("Wrong protoocol " + parsed_url.protocol);
+     log.error(response.from + "Wrong protoocol " + parsed_url.protocol);
     response.statusCode = 500;
     response.end();
     return;
   }
   var directory = "storage/" + parsed_url.host + (parsed_url.pathname || '');
-  log.debug("Incoming request " + parsed_url.href);
+  log.debug(response.from + "Incoming request " + parsed_url.href);
   if (request.headers['user-agent'] && request.headers['user-agent'].match(/^git/)) {
     process_git_request(response, request.url, directory);
     return;
@@ -586,7 +592,7 @@ http.createServer(function (request, response) {
   var not_found = argv.no_proxy ? function(response, headers, parsed_url, directory) {
     response.statusCode = 500;
     response.end();
-    log.error('File not found on proxy', directory);
+    log.error(response.from + 'File not found on proxy', directory);
   } : proxy;
   if (request.method == 'GET') {
     process_req(response, request.headers, parsed_url, directory, undefined, not_found);
@@ -609,18 +615,19 @@ http.createServer(function (request, response) {
 }).on('error', function(err) {
   log.error("HTTP ERROR : " + err);
 }).on('connect', function(request, socket, head) {
+  response.from = extract_from(request);
   var splitted = request.url.split(':');
-  log.notice('HTTP CONNECT to', splitted[0], splitted[1]);
+  log.notice(response.from + 'HTTP CONNECT to', splitted[0], splitted[1]);
   var connection = net.createConnection(splitted[1], splitted[0], function() {
     socket.write('HTTP/1.0 200 Connection established\r\n\r\n');
     socket.pipe(connection);
     connection.pipe(socket);
     socket.on('end', function() {
-      log.notice('End HTTP CONNECT to', splitted[0], splitted[1]);
+      log.notice(response.from + 'End HTTP CONNECT to', splitted[0], splitted[1]);
     });
   });
   connection.on('error', function(err) {
-    log.notice('HTTP CONNECT error', err);
+    log.notice(response.from + 'HTTP CONNECT error', err);
     socket.write('HTTP/1.0 500 Error\r\n\r\n');
     socket.end();
   })
