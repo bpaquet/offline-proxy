@@ -615,19 +615,19 @@ http.createServer(function (request, response) {
 }).on('error', function(err) {
   log.error("HTTP ERROR : " + err);
 }).on('connect', function(request, socket, head) {
-  response.from = extract_from(request);
+  var from = extract_from(request);
   var splitted = request.url.split(':');
-  log.notice(response.from + 'HTTP CONNECT to', splitted[0], splitted[1]);
+  log.notice(from + 'HTTP CONNECT to', splitted[0], splitted[1]);
   var connection = net.createConnection(splitted[1], splitted[0], function() {
     socket.write('HTTP/1.0 200 Connection established\r\n\r\n');
     socket.pipe(connection);
     connection.pipe(socket);
     socket.on('end', function() {
-      log.notice(response.from + 'End HTTP CONNECT to', splitted[0], splitted[1]);
+      log.notice(from + 'End HTTP CONNECT to', splitted[0], splitted[1]);
     });
   });
   connection.on('error', function(err) {
-    log.notice(response.from + 'HTTP CONNECT error', err);
+    log.notice(from + 'HTTP CONNECT error', err);
     socket.write('HTTP/1.0 500 Error\r\n\r\n');
     socket.end();
   })
