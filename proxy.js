@@ -499,7 +499,7 @@ function process_git_request(response, url, directory) {
         if (argv.http_proxy) {
           command += 'export http_proxy=' + argv.http_proxy + ' && ';
         }
-        command += 'git clone --bare ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
+        command += 'git clone --mirror ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
         var child = spawn('/bin/sh', ['-c', command]);
         log.debug(response.from + 'Launching command', command);
         child.on('exit', function(code) {
