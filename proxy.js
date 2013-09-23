@@ -32,6 +32,11 @@ if (argv.http_proxy) {
   http_proxy = url.parse(argv.http_proxy);
 }
 
+var https_proxy = undefined;
+if (argv.https_proxy) {
+  https_proxy = url.parse(argv.https_proxy);
+}
+
 function formatSize(n) {
   if (!n) {
     return 'undefined';
@@ -499,6 +504,9 @@ function process_git_request(response, url, directory) {
         if (argv.http_proxy) {
           command += 'export http_proxy=' + argv.http_proxy + ' && ';
         }
+        if (argv.https_proxy) {
+          command += 'export https_proxy=' + argv.https_proxy + ' && ';
+        }
         command += 'git clone --mirror ' + git_repo_url + ' ' + git_repo_path + ' && cd ' + git_repo_path + ' && git update-server-info';
         var child = spawn('/bin/sh', ['-c', command]);
         log.debug(response.from + 'Launching command', command);
@@ -549,6 +557,9 @@ http.createServer(function (request, response) {
     var command = '';
     if (argv.http_proxy) {
       command += 'export http_proxy=' + argv.http_proxy + ' && ';
+    }
+    if (argv.http_proxy) {
+      command += 'export https_proxy=' + argv.https_proxy + ' && ';
     }
     command += 'cd storage && export home_dir=`pwd`; for i in `find . -name "packed-refs"`; do echo "Reloading `dirname $i`" && cd $home_dir && cd `dirname $i` && git fetch -q origin && git update-server-info || exit 1; done && echo "OK";';
     var child = spawn('/bin/sh', ['-c', command]);
