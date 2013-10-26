@@ -283,7 +283,6 @@ function proxy(response, headers, parsed_url, directory, body_chunks) {
       }
       else {
         log.info(ctx.from + 'All data has been sent to client from temp file', ctx.directory)
-        fs.close(fd);
         response.end();
       }
     });
