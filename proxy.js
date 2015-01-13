@@ -17,6 +17,9 @@ http.globalAgent.maxSockets = 100;
 var argv = require('optimist').argv;
 
 var port = argv.port || 3128;
+var bind = argv.bind || "0.0.0.0";
+
+log.info("Bind to " + bind)
 
 log.setLogLevel('notice');
 
@@ -641,7 +644,7 @@ http.createServer(function (request, response) {
     socket.write('HTTP/1.0 500 Error\r\n\r\n');
     socket.end();
   })
-}).listen(port);
+}).listen(port, bind);
 
 log.notice("Offline Proxy ready on port " + port);
 
