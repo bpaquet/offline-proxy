@@ -327,6 +327,10 @@ function run_proxy_request(ctx) {
       ctx.parsed_url.path = full_path;
       ctx.parsed_url.protocol = http_proxy.protocol;
       ctx.parsed_url.hostname = http_proxy.hostname;
+      if (http_proxy.auth) {
+        ctx.parsed_url.headers = {}
+        ctx.parsed_url.headers['proxy-authorization'] = 'Basic ' + new Buffer(http_proxy.auth).toString('base64');
+      }
       ctx.parsed_url.port = http_proxy.port;
     }
     if (ctx.body_chunks) {
